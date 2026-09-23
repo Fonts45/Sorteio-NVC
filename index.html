@@ -1,0 +1,133 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Sorteio Natu Vale</title>
+  <meta name="description" content="Participe do sorteio da Natu Vale: informe o seu @ do Instagram.">
+  <meta name="theme-color" content="#215037">
+  <link rel="icon" type="image/png" href="assets/favicon.png">
+  <link rel="apple-touch-icon" href="assets/favicon.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;700;800;900&display=swap">
+  <link rel="stylesheet" href="css/styles.css">
+</head>
+<body>
+  <main class="pagina">
+    <article class="card">
+
+      <!-- Cadeado: pede a senha e libera o modo administrador nesta mesma página -->
+      <button id="botao-cadeado" class="botao-cadeado" type="button"
+              aria-label="Acesso do administrador" title="Acesso do administrador" data-requer-config>
+        <svg class="icone-fechado" viewBox="0 0 24 24" aria-hidden="true">
+          <rect x="4.5" y="10.5" width="15" height="10.5" rx="2.5"/>
+          <path d="M8 10.5V7.5a4 4 0 0 1 8 0v3"/>
+          <circle cx="12" cy="15.5" r="1.4" class="furo"/>
+        </svg>
+        <svg class="icone-aberto" viewBox="0 0 24 24" aria-hidden="true">
+          <rect x="4.5" y="10.5" width="15" height="10.5" rx="2.5"/>
+          <path d="M8 10.5V7.5a4 4 0 0 1 7.6-1.7"/>
+          <circle cx="12" cy="15.5" r="1.4" class="furo"/>
+        </svg>
+      </button>
+
+      <header class="card-topo">
+        <!-- LOGO: para trocar, substitua o arquivo assets/logo.png (mantendo o mesmo nome). -->
+        <img class="logo" src="assets/logo.png" alt="Natu Vale" width="480" height="515">
+      </header>
+
+      <p class="selo-admin so-admin">Modo administrador</p>
+
+      <div id="aviso-config" class="aviso" role="note" hidden></div>
+
+      <!-- Participação -->
+      <section data-requer-config>
+        <h1>Obrigado por Participar!</h1>
+        <p class="subtitulo" id="subtitulo">Informe o seu @ do Instagram.</p>
+
+        <form id="form-participar" novalidate>
+          <label class="sr-only" for="campo-instagram">Seu @ do Instagram</label>
+          <div class="campo-arroba" id="caixa-campo">
+            <span class="arroba" aria-hidden="true">@</span>
+            <input id="campo-instagram" name="instagram" type="text" inputmode="text"
+                   autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false"
+                   maxlength="80" placeholder="seu.usuario" enterkeyhint="go" required>
+          </div>
+          <button id="botao-participar" class="botao botao-primario" type="submit">PARTICIPAR</button>
+        </form>
+
+        <p id="mensagem" class="mensagem" role="status" aria-live="polite" hidden></p>
+        <p id="ja-participa" class="ja-participa" hidden>Você já está participando deste sorteio.</p>
+      </section>
+
+      <!-- Só no modo administrador -->
+      <div class="area-sortear so-admin">
+        <button id="botao-sortear" class="botao botao-sortear" type="button">SORTEAR</button>
+        <p id="mensagem-sorteio" class="mensagem erro" role="alert" hidden></p>
+      </div>
+
+      <!-- Resultado do sorteio (aparece para todos, em tempo real) -->
+      <section id="resultado" class="resultado" hidden>
+        <p class="resultado-titulo">🎉 SORTEADO 🎉</p>
+        <p class="resultado-nome"></p>
+        <p class="resultado-info"></p>
+      </section>
+      <p id="anuncio" class="sr-only" aria-live="assertive"></p>
+
+      <section id="secao-historico" class="secao" hidden>
+        <div class="secao-topo">
+          <h2><span class="so-publico">Últimos sorteados</span><span class="so-admin">Histórico de sorteios</span></h2>
+          <button id="botao-limpar-historico" class="botao-texto perigo so-admin" type="button"
+                  title="Limpar histórico de sorteios" aria-label="Limpar histórico de sorteios">Limpar</button>
+        </div>
+        <ol id="lista-historico" class="historico-lista"></ol>
+        <p id="historico-vazio" class="lista-vazia" hidden>Nenhum sorteio realizado ainda.</p>
+      </section>
+
+      <!-- Participantes -->
+      <section class="secao" data-requer-config>
+        <div class="secao-topo">
+          <h2>Participantes: <span id="contador" class="contador">0</span></h2>
+          <span id="status-ao-vivo" class="ao-vivo">conectando…</span>
+        </div>
+        <label class="sr-only" for="busca">Buscar participante</label>
+        <input id="busca" class="busca" type="search" placeholder="Buscar @" autocomplete="off" autocapitalize="none" spellcheck="false" hidden>
+        <ul id="lista-participantes" class="lista-participantes"></ul>
+        <p id="lista-vazia" class="lista-vazia" data-vazio="Ainda não há participantes. Seja o primeiro!">Carregando participantes…</p>
+      </section>
+
+    </article>
+    <footer class="rodape">Natu Vale · Sorteio</footer>
+  </main>
+
+  <!-- Janela da senha do administrador -->
+  <dialog id="dialogo-admin" class="dialogo" aria-labelledby="dialogo-titulo">
+    <form id="form-senha" class="dialogo-conteudo" novalidate>
+      <div class="dialogo-icone" aria-hidden="true">
+        <svg viewBox="0 0 24 24"><rect x="4.5" y="10.5" width="15" height="10.5" rx="2.5"/><path d="M8 10.5V7.5a4 4 0 0 1 8 0v3"/></svg>
+      </div>
+      <h2 id="dialogo-titulo">Acesso do administrador</h2>
+
+      <div class="parte-entrar">
+        <p class="dialogo-texto">Digite a senha para liberar o sorteio.</p>
+        <label class="sr-only" for="campo-senha">Senha</label>
+        <input id="campo-senha" class="campo-senha" type="password" autocomplete="current-password" placeholder="Senha">
+        <p id="erro-senha" class="mensagem erro" role="alert" hidden></p>
+      </div>
+      <p class="dialogo-texto parte-sair">Sair do modo administrador neste aparelho?</p>
+
+      <div class="dialogo-acoes">
+        <button id="botao-cancelar" class="botao botao-secundario" type="button">Cancelar</button>
+        <button id="botao-confirmar" class="botao botao-primario" type="submit">ENTRAR</button>
+      </div>
+    </form>
+  </dialog>
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="js/config.js"></script>
+  <script src="js/demo.js"></script>
+  <script src="js/common.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>
