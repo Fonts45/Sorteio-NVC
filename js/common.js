@@ -30,6 +30,12 @@
     return /^[a-z0-9._]{1,30}$/.test(normalizado) && !/^\.|\.$|\.\./.test(normalizado);
   }
 
+  // O Instagram não permite conferir automaticamente se um perfil existe;
+  // por isso o site oferece o link para o administrador conferir o vencedor.
+  function linkInstagram(usuario) {
+    return "https://www.instagram.com/" + encodeURIComponent(usuario) + "/";
+  }
+
   // ---------------------------------------------------------------
   // Conexão: Supabase (real) ou modo demonstração (sem banco)
   // ---------------------------------------------------------------
@@ -163,6 +169,11 @@
     return Number(n).toLocaleString("pt-BR");
   }
 
+  // Número do participante no sorteio: "Nº 7".
+  function rotuloNumero(numero) {
+    return numero ? "Nº " + numero : "";
+  }
+
   const esperar = (ms) => new Promise((r) => setTimeout(r, ms));
   const movimentoReduzido = () => window.matchMedia && matchMedia("(prefers-reduced-motion: reduce)").matches;
 
@@ -176,7 +187,7 @@
     for (let de = 0; ; de += PAGINA) {
       const { data, error } = await db
         .from("participantes")
-        .select("id, instagram_username_normalizado, criado_em")
+        .select("id, numero, instagram_username_normalizado, criado_em")
         .order("id", { ascending: false })
         .range(de, de + PAGINA - 1);
       if (error) throw error;
@@ -189,7 +200,7 @@
   async function carregarUltimosSorteios() {
     const { data, error } = await db
       .from("sorteios")
-      .select("id, instagram_username, total_participantes, sorteado_em")
+      .select("id, participante_id, numero, instagram_username, total_participantes, sorteado_em")
       .order("id", { ascending: false })
       .limit(10);
     if (error) throw error;
@@ -201,18 +212,32 @@
   // ---------------------------------------------------------------
 
   function ListaParticipantes(opcoes) {
-    const { elLista, elContador, elBusca, elVazio } = opcoes;
+    const { elLista, elContador, elBusca, elVazio, elResumo } = opcoes;
     const mapa = new Map();
     let filtro = "";
     let meu = null;
     let carregado = false;
     let onExcluir = null;
 
+    const ordem = (p) => p.numero || p.id; // mais recentes primeiro
+
     function criarItem(p, novo) {
       const li = document.createElement("li");
       li.className = "participante" + (novo ? " novo" : "") + (p.instagram_username_normalizado === meu ? " meu" : "");
       li.dataset.id = p.id;
-      const nome = document.createElement("span");
+      if (p.numero) {
+        const num = document.createElement("span");
+        num.className = "num";
+        num.textContent = rotuloNumero(p.numero);
+        li.appendChild(num);
+      }
+      // No modo administrador, cada @ vira link para conferir o perfil.
+      const nome = document.createElement(onExcluir ? "a" : "span");
+      if (onExcluir) {
+        nome.href = linkInstagram(p.instagram_username_normalizado);
+        nome.target = "_blank";
+        nome.rel = "noopener";
+      }
       nome.className = "nome";
       nome.textContent = "@" + p.instagram_username_normalizado;
       nome.title = p.instagram_username_normalizado === meu ? "Você" : "@" + p.instagram_username_normalizado;
@@ -230,7 +255,16 @@
       return li;
     }
 
-    const visivel = (p) => !filtro || p.instagram_username_normalizado.includes(filtro);
+    // Busca pelo @ ou pelo número. Só números ("7", "Nº 7" ou "#7") acham o
+    // número exato (ou um @ que seja exatamente esses dígitos).
+    function visivel(p) {
+      if (!filtro) return true;
+      const soNumero = filtro.replace(/^(n[º°o]?|#)/, "");
+      if (/^\d+$/.test(soNumero)) {
+        return String(p.numero) === soNumero || p.instagram_username_normalizado === soNumero;
+      }
+      return p.instagram_username_normalizado.includes(filtro);
+    }
 
     function atualizarResumo(animar) {
       const total = mapa.size;
@@ -245,14 +279,22 @@
       if (elBusca) elBusca.hidden = total < 12 && !filtro;
       if (elVazio && carregado) {
         elVazio.hidden = !!elLista.firstElementChild;
-        elVazio.textContent = total === 0 ? elVazio.dataset.vazio : "Nenhum @ encontrado.";
+        elVazio.textContent = total === 0 ? elVazio.dataset.vazio : "Nenhum participante encontrado.";
+      }
+      // Resumo no fim da página: total de pessoas e o último número entregue.
+      if (elResumo && carregado) {
+        let ultimo = 0;
+        mapa.forEach((p) => { if (p.numero > ultimo) ultimo = p.numero; });
+        elResumo.hidden = total === 0;
+        elResumo.querySelector("[data-total]").textContent = formatarNumero(total);
+        elResumo.querySelector("[data-ultimo]").textContent = rotuloNumero(ultimo) || "—";
       }
     }
 
     function renderizar() {
       const frag = document.createDocumentFragment();
       [...mapa.values()]
-        .sort((a, b) => b.id - a.id)
+        .sort((a, b) => ordem(b) - ordem(a))
         .forEach((p) => visivel(p) && frag.appendChild(criarItem(p, false)));
       elLista.replaceChildren(frag);
       atualizarResumo(false);
@@ -260,7 +302,8 @@
 
     if (elBusca) {
       elBusca.addEventListener("input", () => {
-        filtro = normalizarInstagram(elBusca.value);
+        filtro = elBusca.value.trim().toLowerCase().replace(/\s+/g, "");
+        if (!/^(n[º°o]?|#)?\d+$/.test(filtro)) filtro = normalizarInstagram(elBusca.value);
         renderizar();
       });
     }
@@ -297,6 +340,7 @@
         renderizar();
       },
       nomes: () => [...mapa.values()].map((p) => p.instagram_username_normalizado),
+      total: () => mapa.size,
     };
   }
 
@@ -323,6 +367,12 @@
         const usuario = document.createElement("span");
         usuario.className = "usuario";
         usuario.textContent = "@" + s.instagram_username;
+        if (s.numero) {
+          const num = document.createElement("span");
+          num.className = "num-historico";
+          num.textContent = rotuloNumero(s.numero);
+          usuario.append(" ", num);
+        }
         const quando = document.createElement("time");
         quando.dateTime = s.sorteado_em;
         quando.textContent = formatarDataHora(s.sorteado_em);
@@ -383,22 +433,32 @@
     const elTitulo = el.querySelector(".resultado-titulo");
     const elNome = el.querySelector(".resultado-nome");
     const elInfo = el.querySelector(".resultado-info");
+    const elNumero = el.querySelector(".resultado-numero");
+    const elLinkPerfil = el.querySelector("#link-perfil");
     const elAnuncio = opcoes.elAnuncio;
     let textoVazio = null; // [título, texto] exibidos quando não há sorteio (modo admin)
     let ultimoId = 0;
+    let atual = null; // sorteio exibido no card
     let emAnimacao = 0;
     let fila = Promise.resolve();
 
     function preencher(s) {
+      atual = s;
       el.classList.remove("vazio", "girando");
       elTitulo.textContent = "🎉 SORTEADO 🎉";
       elNome.textContent = "@" + s.instagram_username;
       elInfo.textContent = formatarDataHora(s.sorteado_em) + " · entre " + formatarNumero(s.total_participantes) + " participantes";
+      if (elNumero) {
+        elNumero.textContent = rotuloNumero(s.numero);
+        elNumero.hidden = !s.numero;
+      }
+      if (elLinkPerfil) elLinkPerfil.href = linkInstagram(s.instagram_username);
       el.hidden = false;
     }
 
     function limpar() {
       ultimoId = 0;
+      atual = null;
       el.classList.remove("girando", "revelado");
       if (textoVazio) {
         el.classList.add("vazio");
@@ -444,6 +504,7 @@
 
     return {
       ultimoId: () => ultimoId,
+      atual: () => atual,
       animando: () => emAnimacao > 0,
       aguardar: () => fila, // termina quando todas as animações da fila acabarem
       mostrar(s) {
@@ -616,6 +677,7 @@
     apagarLocal,
     obterDispositivo,
     formatarDataHora,
+    rotuloNumero,
     carregarUltimosSorteios,
     ListaParticipantes,
     Historico,

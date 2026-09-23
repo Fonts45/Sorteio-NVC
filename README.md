@@ -34,6 +34,18 @@ supabase/trocar-senha.sql   Troca a senha do administrador
 supabase/zerar-sorteio.sql  Apaga participantes e histórico
 ```
 
+## Número do sorteio
+
+Cada pessoa recebe um número na ordem de cadastro (1ª pessoa = Nº 1, 2ª = Nº 2…),
+mostrado em destaque num "bilhete" logo depois de participar — e de novo sempre
+que ela voltar ao site. O número aparece também na lista, no vencedor e no
+histórico; a busca aceita o @ ou o número. No fim da página ficam o total de
+participantes e o último número entregue.
+
+O banco garante números sem repetir e sem pular, mesmo com muita gente se
+cadastrando ao mesmo tempo. O número de alguém excluído não é reaproveitado.
+Para recomeçar do Nº 1, use `supabase/zerar-sorteio.sql`.
+
 ## O botão do cadeado (administrador)
 
 1. Clique no **cadeado** no canto superior da caixa.
@@ -45,7 +57,19 @@ supabase/zerar-sorteio.sql  Apaga participantes e histórico
    quantos @ quiser, um de cada vez ou vários juntos (separados por espaço,
    vírgula ou um por linha — dá para colar uma lista). O @ continua único:
    repetidos e inválidos são avisados e não entram.
-4. O modo administrador vale só naquela aba. Para sair: cadeado → **SAIR**
+4. **Conferir o vencedor:** o card do sorteado tem o botão **Abrir perfil no
+   Instagram ↗**. Se o perfil não existir, clique em **Perfil não existe?
+   Excluir e sortear de novo** — o @ sai da lista e um novo sorteio é feito.
+   No modo administrador, cada @ da lista também é um link para o perfil.
+   (O Instagram não permite conferir automaticamente se um perfil existe;
+   por isso a conferência é feita pelo administrador.)
+5. **Excluir todos os participantes:** botão vermelho no fim da lista. Ele
+   sempre pergunta **"Tem certeza?"** (Sim / Não — o "Não" já vem
+   selecionado). Ao confirmar, a lista é apagada, todos podem se cadastrar de
+   novo e os números **recomeçam do Nº 1**. O histórico de sorteios é mantido.
+   Com a lista já vazia, o mesmo botão serve para recomeçar a numeração
+   (útil depois de excluir participantes um a um, antes do sorteio de verdade).
+6. O modo administrador vale só naquela aba. Para sair: cadeado → **SAIR**
    (ou feche a aba).
 
 Segurança: a senha **não está escrita em nenhum arquivo** do site. No modo

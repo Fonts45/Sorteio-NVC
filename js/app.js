@@ -22,12 +22,15 @@
   const caixaCampo = $("caixa-campo");
   const botao = $("botao-participar");
   const mensagem = $("mensagem");
-  const avisoJaParticipa = $("ja-participa");
+  const bilhete = $("ja-participa");
+  const bilheteNumero = $("bilhete-numero");
+  const bilheteUsuario = $("bilhete-usuario");
   const subtitulo = $("subtitulo");
 
   const dispositivo = S.obterDispositivo();
   let enviando = false;
-  let bloqueadoCom = null; // @ exibido no formulário bloqueado
+  let bloqueadoCom = null; // @ deste navegador (formulário bloqueado)
+  let meuNumero = null; // número deste navegador no sorteio
   let versao = 0; // muda a cada participação confirmada: descarta respostas antigas do servidor
   let senhaAdmin = null; // preenchida só depois que o banco confirma a senha
 
@@ -38,6 +41,7 @@
     elContador: $("contador"),
     elBusca: $("busca"),
     elVazio: $("lista-vazia"),
+    elResumo: $("resumo-final"),
     // O admin excluiu este @ (ou zerou o sorteio): confere e libera o formulário.
     onRemovido: (p) => {
       if (p.instagram_username_normalizado === bloqueadoCom) conferirNoServidor();
@@ -99,14 +103,20 @@
 
   // Desenha o formulário conforme o estado:
   //  • admin: campo sempre livre para adicionar quantos @ quiser;
-  //  • visitante que já participa: campo travado com o @ dele;
+  //  • visitante que já participa: formulário some e aparece o bilhete
+  //    com o número dele no sorteio, grande;
   //  • visitante novo: campo livre para participar.
   function renderizarFormulario() {
     const travado = !senhaAdmin && !!bloqueadoCom;
     campo.disabled = travado;
     caixaCampo.classList.toggle("bloqueado", travado);
     botao.disabled = travado;
-    avisoJaParticipa.hidden = !travado;
+    form.hidden = travado;
+    bilhete.hidden = !travado;
+    if (travado) {
+      bilheteNumero.textContent = meuNumero || "…"; // "…" até o servidor responder
+      bilheteUsuario.textContent = "@" + bloqueadoCom;
+    }
     if (senhaAdmin) {
       subtitulo.textContent = "Adicione quantos @ quiser — vários de uma vez, separados por espaço, vírgula ou linha.";
       campo.placeholder = "usuario1 usuario2 …";
@@ -121,16 +131,19 @@
     }
   }
 
-  function bloquear(usuario) {
+  function bloquear(usuario, numero) {
+    const mudou = usuario !== bloqueadoCom;
     bloqueadoCom = usuario;
-    S.salvarLocal(CHAVE_PARTICIPACAO, usuario);
+    meuNumero = numero || null;
+    S.salvarLocal(CHAVE_PARTICIPACAO, JSON.stringify({ usuario, numero: meuNumero }));
     caixaCampo.classList.remove("com-erro");
-    lista.marcarMeu(usuario);
+    if (mudou) lista.marcarMeu(usuario);
     renderizarFormulario();
   }
 
   function liberar() {
     bloqueadoCom = null;
+    meuNumero = null;
     S.apagarLocal(CHAVE_PARTICIPACAO);
     if (!senhaAdmin) {
       campo.value = "";
@@ -143,16 +156,28 @@
   // Mostra na hora o que este navegador lembra e confirma com o servidor
   // (o servidor é quem manda: se o admin excluir a participação ou zerar
   // o sorteio, o navegador volta a poder participar).
-  const lembrado = S.lerLocal(CHAVE_PARTICIPACAO);
-  if (lembrado) bloquear(lembrado);
+  const lembrado = lerParticipacaoLocal();
+  if (lembrado) bloquear(lembrado.usuario, lembrado.numero);
+
+  // Guardado como {usuario, numero}; versões antigas guardavam só o @.
+  function lerParticipacaoLocal() {
+    const bruto = S.lerLocal(CHAVE_PARTICIPACAO);
+    if (!bruto) return null;
+    try {
+      const dados = JSON.parse(bruto);
+      if (dados && dados.usuario) return dados;
+    } catch (e) { /* formato antigo */ }
+    return { usuario: bruto, numero: null };
+  }
 
   function conferirNoServidor() {
     const pedido = versao;
-    return S.db.rpc("status_dispositivo", { p_dispositivo: dispositivo }).then(({ data, error }) => {
+    return S.db.rpc("minha_participacao", { p_dispositivo: dispositivo }).then(({ data, error }) => {
       if (error || pedido !== versao) return null;
-      if (data) bloquear(data);
+      const minha = (data || [])[0];
+      if (minha) bloquear(minha.usuario, minha.numero);
       else if (bloqueadoCom) liberar();
-      return data;
+      return minha ? minha.usuario : null;
     });
   }
   conferirNoServidor();
@@ -236,12 +261,13 @@
     const invalidos = com("USUARIO_INVALIDO");
 
     adicionados.forEach((l) =>
-      lista.adicionar({ id: l.participante_id, instagram_username_normalizado: l.usuario, criado_em: l.cadastrado_em })
+      lista.adicionar({ id: l.participante_id, numero: l.numero, instagram_username_normalizado: l.usuario, criado_em: l.cadastrado_em })
     );
 
+    const comNumero = (l) => S.rotuloNumero(l.numero) + " @" + l.usuario;
     const partes = [];
-    if (adicionados.length === 1) partes.push("@" + adicionados[0].usuario + " adicionado.");
-    else if (adicionados.length > 1) partes.push(adicionados.length + " @ adicionados.");
+    if (adicionados.length === 1) partes.push("Adicionado: " + comNumero(adicionados[0]) + ".");
+    else if (adicionados.length > 1) partes.push(adicionados.length + " adicionados: " + resumirLista(adicionados.map(comNumero)) + ".");
     if (jaEstavam.length) partes.push("Já estavam na lista: " + resumirLista(jaEstavam.map((l) => "@" + l.usuario)) + ".");
     if (invalidos.length) partes.push("Inválidos (ficaram no campo para corrigir): " + resumirLista(invalidos.map((l) => l.entrada)) + ".");
     if (!partes.length) partes.push("Nenhum @ novo para adicionar.");
@@ -293,9 +319,10 @@
 
     versao++;
     lista.adicionar(resposta.data);
-    bloquear(resposta.data.instagram_username_normalizado);
+    bloquear(resposta.data.instagram_username_normalizado, resposta.data.numero);
     mostrarMensagem("Participação confirmada! Boa sorte.", "sucesso");
     campo.blur();
+    bilhete.scrollIntoView({ behavior: "smooth", block: "center" }); // mostra o número em destaque
   }
 
   // =================================================================
@@ -310,6 +337,7 @@
   const botaoConfirmar = $("botao-confirmar");
   const botaoSortear = $("botao-sortear");
   const mensagemSorteio = $("mensagem-sorteio");
+  const botaoPerfilInvalido = $("botao-perfil-invalido");
   let sorteando = false;
 
   function entrarNoAdmin(senha) {
@@ -428,10 +456,13 @@
     return false;
   }
 
-  botaoSortear.addEventListener("click", async () => {
+  botaoSortear.addEventListener("click", sortearAgora);
+
+  async function sortearAgora() {
     if (sorteando || !senhaAdmin) return;
     sorteando = true;
     botaoSortear.disabled = true;
+    botaoPerfilInvalido.disabled = true;
     mensagemSorteio.hidden = true;
 
     let resposta;
@@ -453,11 +484,39 @@
 
     sorteando = false;
     botaoSortear.disabled = false;
+    botaoPerfilInvalido.disabled = false;
+  }
+
+  // Conferência do vencedor: se o perfil não existir no Instagram, o admin
+  // tira o @ da lista e sorteia de novo com um clique.
+  botaoPerfilInvalido.addEventListener("click", async () => {
+    const s = resultado.atual();
+    if (!s || sorteando || !senhaAdmin) return;
+    const certeza = await perguntar(
+      "Excluir @" + s.instagram_username + " da lista e sortear de novo? Use quando o perfil não existir no Instagram.",
+      "Sim, excluir e sortear"
+    );
+    if (!certeza) return;
+    botaoPerfilInvalido.disabled = true;
+    if (s.participante_id) {
+      const { error } = await S.db.rpc("excluir_participante", { p_senha: senhaAdmin, p_id: s.participante_id });
+      if (error) {
+        botaoPerfilInvalido.disabled = false;
+        if (!falhaAdmin(error)) alert(S.traduzirErro(error));
+        return;
+      }
+      lista.remover(s.participante_id);
+    }
+    await sortearAgora();
   });
 
   async function excluirParticipante(p) {
     const usuario = "@" + p.instagram_username_normalizado;
-    if (!confirm("Excluir " + usuario + " da lista de participantes?\n\nO histórico de sorteios é mantido e essa pessoa poderá se cadastrar de novo.")) return;
+    const certeza = await perguntar(
+      "Excluir " + usuario + " da lista de participantes? O histórico de sorteios é mantido e essa pessoa poderá se cadastrar de novo.",
+      "Sim, excluir"
+    );
+    if (!certeza) return;
     const { error } = await S.db.rpc("excluir_participante", { p_senha: senhaAdmin, p_id: p.id });
     if (error) {
       if (!falhaAdmin(error)) alert(S.traduzirErro(error));
@@ -467,7 +526,11 @@
   }
 
   $("botao-limpar-historico").addEventListener("click", async () => {
-    if (!confirm("Apagar TODO o histórico de sorteios?\n\nOs participantes continuam cadastrados. Esta ação não pode ser desfeita.")) return;
+    const certeza = await perguntar(
+      "Apagar TODO o histórico de sorteios? Os participantes continuam cadastrados. Esta ação não pode ser desfeita.",
+      "Sim, apagar"
+    );
+    if (!certeza) return;
     const { error } = await S.db.rpc("limpar_historico", { p_senha: senhaAdmin });
     if (error) {
       if (!falhaAdmin(error)) alert(S.traduzirErro(error));
@@ -475,4 +538,92 @@
     }
     sincronizacao.recarregar();
   });
+
+  // Excluir TODOS os participantes de uma vez — sempre pergunta antes.
+  const botaoExcluirTodos = $("botao-excluir-todos");
+  const mensagemExcluirTodos = $("mensagem-excluir-todos");
+
+  function avisoExcluirTodos(texto, tipo) {
+    mensagemExcluirTodos.textContent = texto;
+    mensagemExcluirTodos.className = "mensagem " + tipo;
+    mensagemExcluirTodos.hidden = false;
+  }
+
+  botaoExcluirTodos.addEventListener("click", async () => {
+    if (!senhaAdmin) return;
+    mensagemExcluirTodos.hidden = true;
+    const total = lista.total();
+    // Com a lista vazia, o botão serve para recomeçar a numeração do Nº 1
+    // (o contador não volta sozinho quando os participantes são excluídos um a um).
+    const certeza = total
+      ? await perguntar(
+          "Isso vai excluir TODOS os " + total.toLocaleString("pt-BR") + " participantes da lista. " +
+            "Os números voltam a começar do Nº 1 e todos poderão se cadastrar de novo. Esta ação não pode ser desfeita.",
+          "Sim, excluir todos"
+        )
+      : await perguntar("A lista já está vazia. Deseja recomeçar a numeração para que o próximo cadastro seja o Nº 1?", "Sim, recomeçar");
+    if (!certeza) return;
+
+    botaoExcluirTodos.disabled = true;
+    textoBotao(botaoExcluirTodos, "EXCLUINDO", true);
+    let resposta;
+    try {
+      resposta = await S.db.rpc("excluir_todos_participantes", { p_senha: senhaAdmin });
+    } catch (erro) {
+      resposta = { error: erro };
+    }
+    botaoExcluirTodos.disabled = false;
+    textoBotao(botaoExcluirTodos, "Excluir todos os participantes");
+
+    if (resposta.error) {
+      if (!falhaAdmin(resposta.error)) avisoExcluirTodos(S.traduzirErro(resposta.error), "erro");
+      return;
+    }
+    const n = Number(resposta.data) || 0;
+    avisoExcluirTodos(
+      n === 0 ? "Pronto: o próximo cadastro será o Nº 1."
+        : (n === 1 ? "1 participante excluído." : n.toLocaleString("pt-BR") + " participantes excluídos.") +
+          " Os próximos cadastros começam do Nº 1.",
+      "sucesso"
+    );
+    sincronizacao.recarregar();
+  });
+
+  // Janela "Tem certeza?" com Sim / Não. O "Não" já vem selecionado, então
+  // um Enter sem querer não apaga nada. Esc, fechar ou clicar fora = Não.
+  const dialogoConfirmar = $("dialogo-confirmar");
+  const confirmarTexto = $("confirmar-texto");
+  const confirmarSim = $("confirmar-sim");
+  const confirmarNao = $("confirmar-nao");
+  let respostaPendente = null;
+
+  function responder(sim) {
+    if (!respostaPendente) return;
+    const resolver = respostaPendente;
+    respostaPendente = null;
+    if (dialogoConfirmar.open) dialogoConfirmar.close();
+    resolver(sim);
+  }
+
+  confirmarSim.addEventListener("click", () => responder(true));
+  confirmarNao.addEventListener("click", () => responder(false));
+  dialogoConfirmar.addEventListener("cancel", () => responder(false)); // tecla Esc
+  dialogoConfirmar.addEventListener("close", () => {
+    if (!dialogoConfirmar.open) responder(false); // fechada de outro jeito (ignora aviso atrasado)
+  });
+  dialogoConfirmar.addEventListener("click", (e) => {
+    if (e.target === dialogoConfirmar) responder(false); // clique fora da janela
+  });
+
+  function perguntar(texto, rotuloSim) {
+    if (typeof dialogoConfirmar.showModal !== "function") return Promise.resolve(confirm(texto)); // navegador antigo
+    responder(false); // se havia outra pergunta aberta, ela conta como "Não"
+    return new Promise((resolver) => {
+      respostaPendente = resolver;
+      confirmarTexto.textContent = texto;
+      confirmarSim.textContent = rotuloSim || "Sim";
+      dialogoConfirmar.showModal();
+      confirmarNao.focus();
+    });
+  }
 })();

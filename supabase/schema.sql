@@ -38,6 +38,40 @@ create table if not exists public.participantes (
 
 create index if not exists participantes_criado_em_idx on public.participantes (criado_em desc);
 
+-- Número do participante no sorteio (1, 2, 3…), na ordem de cadastro.
+-- É distribuído sem "buracos" e nunca muda, mesmo se alguém for excluído.
+alter table public.participantes add column if not exists numero integer;
+
+with base as (select coalesce(max(numero), 0) as maximo from public.participantes),
+     sem_numero as (select id, row_number() over (order by id) as ordem
+                      from public.participantes where numero is null)
+update public.participantes p
+   set numero = base.maximo + sem_numero.ordem
+  from base, sem_numero
+ where p.id = sem_numero.id;
+
+alter table public.participantes alter column numero set not null;
+
+do $$
+begin
+  if not exists (select 1 from pg_constraint where conname = 'participantes_numero_key') then
+    alter table public.participantes add constraint participantes_numero_key unique (numero);
+  end if;
+end;
+$$;
+
+-- Contador do último número entregue. Nunca volta atrás: o número de quem
+-- for excluído não é reaproveitado. (Zerado só por supabase/zerar-sorteio.sql)
+create table if not exists public.contador_numero (
+  id      integer primary key default 1 check (id = 1),
+  ultimo  integer not null default 0
+);
+
+insert into public.contador_numero (id, ultimo)
+values (1, (select coalesce(max(numero), 0) from public.participantes))
+on conflict (id) do update
+  set ultimo = greatest(public.contador_numero.ultimo, excluded.ultimo);
+
 -- Identificador persistente de cada navegador. Fica em tabela separada
 -- (e sem acesso público) para que ninguém consiga ler os IDs pela API.
 create table if not exists public.dispositivos (
@@ -55,6 +89,9 @@ create table if not exists public.sorteios (
 );
 
 create index if not exists sorteios_sorteado_em_idx on public.sorteios (sorteado_em desc);
+
+-- O sorteio guarda o número do vencedor (fica no histórico mesmo se ele for excluído).
+alter table public.sorteios add column if not exists numero integer;
 
 -- Senha do administrador, guardada só como hash bcrypt (nunca em texto).
 -- Senha inicial: a combinada para o sorteio. Para trocar: supabase/trocar-senha.sql
@@ -78,6 +115,8 @@ drop policy if exists "Público vê os últimos sorteios" on public.sorteios;
 drop function if exists public.sortear();
 drop function if exists public.is_admin();
 drop table if exists public.admins;
+-- (versão sem o número do sorteio no retorno; é recriada abaixo)
+drop function if exists public.adicionar_participantes_admin(text, text[]);
 
 
 -- ---------------------------------------------------------------------
@@ -117,6 +156,19 @@ as $$
     p_normalizado ~ '^[a-z0-9._]{1,30}$' and p_normalizado !~ '^\.|\.$|\.\.',
     false
   );
+$$;
+
+-- Próximo número do sorteio. A linha do contador fica travada até o fim do
+-- cadastro: com várias pessoas no mesmo segundo, cada uma recebe o seu
+-- número, sem repetir. Se o cadastro falhar, o contador volta junto
+-- (desfeito pela transação), então nenhum número é pulado.
+create or replace function public.proximo_numero()
+returns integer
+language sql
+volatile
+set search_path = ''
+as $$
+  update public.contador_numero set ultimo = ultimo + 1 where id = 1 returning ultimo;
 $$;
 
 -- A senha do administrador confere? (usada pelo botão do cadeado)
@@ -178,8 +230,8 @@ begin
 
   -- As restrições UNIQUE garantem a regra mesmo com cadastros simultâneos.
   begin
-    insert into public.participantes (instagram_username, instagram_username_normalizado)
-    values (v_limpo, v_normalizado)
+    insert into public.participantes (instagram_username, instagram_username_normalizado, numero)
+    values (v_limpo, v_normalizado, public.proximo_numero())
     returning * into v_novo;
 
     insert into public.dispositivos (dispositivo_id, participante_id)
@@ -201,7 +253,7 @@ $$;
 -- Devolve uma linha por @ enviado, com a situação:
 --   ADICIONADO, USUARIO_JA_CADASTRADO, USUARIO_INVALIDO ou REPETIDO (na própria lista)
 create or replace function public.adicionar_participantes_admin(p_senha text, p_usernames text[])
-returns table (entrada text, usuario text, situacao text, participante_id bigint, cadastrado_em timestamptz)
+returns table (entrada text, usuario text, situacao text, participante_id bigint, cadastrado_em timestamptz, numero integer)
 language plpgsql
 security definer
 set search_path = ''
@@ -225,6 +277,7 @@ begin
     usuario         := lower(v_limpo);
     participante_id := null;
     cadastrado_em   := null;
+    numero          := null;
 
     if not public.instagram_valido(usuario) then
       situacao := 'USUARIO_INVALIDO';
@@ -233,12 +286,13 @@ begin
     else
       v_vistos := v_vistos || usuario;
       begin
-        insert into public.participantes (instagram_username, instagram_username_normalizado)
-        values (v_limpo, usuario)
+        insert into public.participantes (instagram_username, instagram_username_normalizado, numero)
+        values (v_limpo, usuario, public.proximo_numero())
         returning * into v_novo;
         situacao        := 'ADICIONADO';
         participante_id := v_novo.id;
         cadastrado_em   := v_novo.criado_em;
+        numero          := v_novo.numero;
       exception when unique_violation then
         situacao := 'USUARIO_JA_CADASTRADO';
       end;
@@ -248,7 +302,21 @@ begin
 end;
 $$;
 
--- Este navegador já participa? Devolve o @ cadastrado ou null.
+-- Este navegador já participa? Devolve o @ e o número do sorteio (ou nada).
+create or replace function public.minha_participacao(p_dispositivo uuid)
+returns table (usuario text, numero integer)
+language sql
+stable
+security definer
+set search_path = ''
+as $$
+  select p.instagram_username_normalizado, p.numero
+    from public.dispositivos d
+    join public.participantes p on p.id = d.participante_id
+   where d.dispositivo_id = p_dispositivo;
+$$;
+
+-- (Versão antiga, mantida para compatibilidade.) Devolve o @ cadastrado ou null.
 create or replace function public.status_dispositivo(p_dispositivo uuid)
 returns text
 language sql
@@ -290,8 +358,8 @@ begin
    order by gen_random_uuid()
    limit 1;
 
-  insert into public.sorteios (participante_id, instagram_username, total_participantes)
-  values (v_escolha.id, v_escolha.instagram_username_normalizado, v_total)
+  insert into public.sorteios (participante_id, instagram_username, total_participantes, numero)
+  values (v_escolha.id, v_escolha.instagram_username_normalizado, v_total, v_escolha.numero)
   returning * into v_sorteio;
 
   return v_sorteio;
@@ -331,6 +399,31 @@ begin
 end;
 $$;
 
+-- Excluir TODOS os participantes de uma vez (exige a senha). Os navegadores
+-- ficam livres para participar de novo e os números recomeçam do Nº 1.
+-- O histórico de sorteios é mantido (ele tem o botão "Limpar" próprio).
+create or replace function public.excluir_todos_participantes(p_senha text)
+returns integer
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_total integer;
+begin
+  if not public.verificar_senha_admin(p_senha) then
+    raise exception 'SENHA_INVALIDA' using errcode = '42501';
+  end if;
+  -- Trava o contador: espera cadastros em andamento terminarem e segura os
+  -- novos até o fim, para ninguém escapar da limpeza com um número antigo.
+  perform 1 from public.contador_numero where id = 1 for update;
+  delete from public.participantes where true;   -- apaga também os dispositivos (cascade)
+  get diagnostics v_total = row_count;
+  update public.contador_numero set ultimo = 0 where id = 1;
+  return v_total;
+end;
+$$;
+
 -- Apagar todo o histórico de sorteios (exige a senha).
 create or replace function public.limpar_historico(p_senha text)
 returns integer
@@ -355,7 +448,8 @@ $$;
 -- 3. PERMISSÕES (quem pode chamar o quê pela API)
 -- ---------------------------------------------------------------------
 
-revoke all on table public.participantes, public.dispositivos, public.sorteios, public.configuracao_admin
+revoke all on table public.participantes, public.dispositivos, public.sorteios, public.configuracao_admin,
+                    public.contador_numero
   from anon, authenticated;
 
 grant select on table public.participantes to anon, authenticated;
@@ -363,6 +457,8 @@ grant select on table public.sorteios      to anon, authenticated;
 
 revoke execute on function public.limpar_instagram(text)               from public, anon, authenticated;
 revoke execute on function public.instagram_valido(text)               from public, anon, authenticated;
+revoke execute on function public.proximo_numero()                     from public, anon, authenticated;
+revoke execute on function public.minha_participacao(uuid)             from public, anon, authenticated;
 revoke execute on function public.adicionar_participantes_admin(text, text[]) from public, anon, authenticated;
 revoke execute on function public.verificar_senha_admin(text)          from public, anon, authenticated;
 revoke execute on function public.ultimos_sorteios_ids()               from public, anon, authenticated;
@@ -372,16 +468,19 @@ revoke execute on function public.sortear(text)                        from publ
 revoke execute on function public.historico_completo(text)             from public, anon, authenticated;
 revoke execute on function public.excluir_participante(text, bigint)   from public, anon, authenticated;
 revoke execute on function public.limpar_historico(text)               from public, anon, authenticated;
+revoke execute on function public.excluir_todos_participantes(text)    from public, anon, authenticated;
 
 grant execute on function public.verificar_senha_admin(text)          to anon, authenticated;
 grant execute on function public.ultimos_sorteios_ids()               to anon, authenticated;
 grant execute on function public.participar(text, uuid)               to anon, authenticated;
 grant execute on function public.status_dispositivo(uuid)             to anon, authenticated;
+grant execute on function public.minha_participacao(uuid)             to anon, authenticated;
 grant execute on function public.adicionar_participantes_admin(text, text[]) to anon, authenticated;
 grant execute on function public.sortear(text)                        to anon, authenticated;
 grant execute on function public.historico_completo(text)             to anon, authenticated;
 grant execute on function public.excluir_participante(text, bigint)   to anon, authenticated;
 grant execute on function public.limpar_historico(text)               to anon, authenticated;
+grant execute on function public.excluir_todos_participantes(text)    to anon, authenticated;
 
 
 -- ---------------------------------------------------------------------
@@ -392,6 +491,7 @@ alter table public.participantes      enable row level security;
 alter table public.dispositivos       enable row level security;   -- sem regras = ninguém acessa pela API
 alter table public.sorteios           enable row level security;
 alter table public.configuracao_admin enable row level security;   -- sem regras = ninguém acessa pela API
+alter table public.contador_numero    enable row level security;   -- sem regras = ninguém acessa pela API
 
 drop policy if exists "Todos veem os participantes"    on public.participantes;
 drop policy if exists "Público vê os últimos sorteios" on public.sorteios;

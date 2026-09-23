@@ -25,11 +25,17 @@
     const ouvintes = [];
 
     function ler() {
+      let d = null;
       try {
-        const d = JSON.parse(localStorage.getItem(CHAVE));
-        if (d && d.participantes) return d;
+        d = JSON.parse(localStorage.getItem(CHAVE));
       } catch (e) { /* sem armazenamento: começa vazio */ }
-      return { participantes: [], dispositivos: [], sorteios: [], seq: { p: 0, s: 0 } };
+      if (!d || !d.participantes) d = { participantes: [], dispositivos: [], sorteios: [], seq: { p: 0, s: 0, n: 0 } };
+      // Dados de uma versão anterior sem o número do sorteio: numera por ordem de cadastro.
+      if (d.seq.n === undefined) {
+        d.seq.n = 0;
+        d.participantes.sort((a, b) => a.id - b.id).forEach((p) => (p.numero = ++d.seq.n));
+      }
+      return d;
     }
     function gravar(d) {
       try { localStorage.setItem(CHAVE, JSON.stringify(d)); } catch (e) { /* modo privado */ }
@@ -80,6 +86,7 @@
         if (d.participantes.some((x) => x.instagram_username_normalizado === normalizado)) return erro("USUARIO_JA_CADASTRADO");
         const novo = {
           id: ++d.seq.p,
+          numero: ++d.seq.n, // mesmo contador do banco real: nunca volta atrás
           instagram_username: limpo,
           instagram_username_normalizado: normalizado,
           criado_em: new Date().toISOString(),
@@ -91,11 +98,11 @@
         return ok(novo);
       },
 
-      status_dispositivo({ p_dispositivo }) {
+      minha_participacao({ p_dispositivo }) {
         const d = ler();
         const disp = d.dispositivos.find((x) => x.dispositivo_id === p_dispositivo);
         const p = disp && d.participantes.find((x) => x.id === disp.participante_id);
-        return ok(p ? p.instagram_username_normalizado : null);
+        return ok(p ? [{ usuario: p.instagram_username_normalizado, numero: p.numero }] : []);
       },
 
       async verificar_senha_admin({ p_senha }) {
@@ -112,7 +119,7 @@
         const linhas = entradas.map((entrada) => {
           const limpo = ajuda.limparInstagram(entrada);
           const usuario = limpo.toLowerCase();
-          const linha = { entrada, usuario, situacao: "", participante_id: null, cadastrado_em: null };
+          const linha = { entrada, usuario, situacao: "", participante_id: null, cadastrado_em: null, numero: null };
           if (!ajuda.instagramValido(usuario)) {
             linha.situacao = "USUARIO_INVALIDO";
             return linha;
@@ -126,10 +133,10 @@
             linha.situacao = "USUARIO_JA_CADASTRADO";
             return linha;
           }
-          const novo = { id: ++d.seq.p, instagram_username: limpo, instagram_username_normalizado: usuario, criado_em: new Date().toISOString() };
+          const novo = { id: ++d.seq.p, numero: ++d.seq.n, instagram_username: limpo, instagram_username_normalizado: usuario, criado_em: new Date().toISOString() };
           d.participantes.push(novo);
           novos.push(novo);
-          Object.assign(linha, { situacao: "ADICIONADO", participante_id: novo.id, cadastrado_em: novo.criado_em });
+          Object.assign(linha, { situacao: "ADICIONADO", participante_id: novo.id, cadastrado_em: novo.criado_em, numero: novo.numero });
           return linha;
         });
         gravar(d);
@@ -146,6 +153,7 @@
         const s = {
           id: ++d.seq.s,
           participante_id: v.id,
+          numero: v.numero,
           instagram_username: v.instagram_username_normalizado,
           total_participantes: d.participantes.length,
           sorteado_em: new Date().toISOString(),
@@ -171,6 +179,19 @@
         gravar(d);
         if (existia) avisar({ table: "participantes", eventType: "DELETE", new: {}, old: { id: p_id } });
         return ok(existia);
+      },
+
+      async excluir_todos_participantes({ p_senha }) {
+        if (!(await senhaConfere(p_senha))) return erro("SENHA_INVALIDA", "42501");
+        const d = ler();
+        const apagados = d.participantes;
+        d.participantes = [];
+        d.dispositivos = [];
+        d.sorteios.forEach((s) => (s.participante_id = null));
+        d.seq.n = 0; // números recomeçam do Nº 1
+        gravar(d);
+        apagados.forEach((p) => avisar({ table: "participantes", eventType: "DELETE", new: {}, old: { id: p.id } }));
+        return ok(apagados.length);
       },
 
       async limpar_historico({ p_senha }) {

@@ -58,7 +58,14 @@
         </form>
 
         <p id="mensagem" class="mensagem" role="status" aria-live="polite" hidden></p>
-        <p id="ja-participa" class="ja-participa" hidden>Você já está participando deste sorteio.</p>
+
+        <!-- Bilhete: número do participante no sorteio, grande e fácil de ver -->
+        <div id="ja-participa" class="bilhete" hidden>
+          <p class="bilhete-rotulo">Seu número do sorteio</p>
+          <p class="bilhete-numero"><span class="bilhete-n">Nº</span><span id="bilhete-numero">…</span></p>
+          <p class="bilhete-usuario" id="bilhete-usuario"></p>
+          <p class="bilhete-rodape">Você já está participando deste sorteio.<br>Guarde este número!</p>
+        </div>
       </section>
 
       <!-- Só no modo administrador -->
@@ -70,8 +77,14 @@
       <!-- Resultado do sorteio (aparece para todos, em tempo real) -->
       <section id="resultado" class="resultado" hidden>
         <p class="resultado-titulo">🎉 SORTEADO 🎉</p>
+        <p class="resultado-numero" hidden></p>
         <p class="resultado-nome"></p>
         <p class="resultado-info"></p>
+        <!-- Conferência do vencedor: o Instagram não permite checar perfis automaticamente -->
+        <div class="resultado-acoes">
+          <a id="link-perfil" class="botao-perfil" href="#" target="_blank" rel="noopener">Abrir perfil no Instagram ↗</a>
+          <button id="botao-perfil-invalido" class="botao-invalido so-admin" type="button">Perfil não existe? Excluir e sortear de novo</button>
+        </div>
       </section>
       <p id="anuncio" class="sr-only" aria-live="assertive"></p>
 
@@ -92,9 +105,21 @@
           <span id="status-ao-vivo" class="ao-vivo">conectando…</span>
         </div>
         <label class="sr-only" for="busca">Buscar participante</label>
-        <input id="busca" class="busca" type="search" placeholder="Buscar @" autocomplete="off" autocapitalize="none" spellcheck="false" hidden>
+        <input id="busca" class="busca" type="search" placeholder="Buscar @ ou número" autocomplete="off" autocapitalize="none" spellcheck="false" hidden>
         <ul id="lista-participantes" class="lista-participantes"></ul>
         <p id="lista-vazia" class="lista-vazia" data-vazio="Ainda não há participantes. Seja o primeiro!">Carregando participantes…</p>
+
+        <!-- Resumo final: quantas pessoas e qual o último número entregue -->
+        <div id="resumo-final" class="resumo-final" aria-live="polite" hidden>
+          <div><span class="resumo-rotulo">Participantes</span><strong data-total>0</strong></div>
+          <div><span class="resumo-rotulo">Último número</span><strong data-ultimo>—</strong></div>
+        </div>
+
+        <!-- Só no modo administrador: apaga a lista inteira (pede confirmação) -->
+        <div class="area-excluir-todos so-admin">
+          <button id="botao-excluir-todos" class="botao botao-perigo" type="button">Excluir todos os participantes</button>
+          <p id="mensagem-excluir-todos" class="mensagem" role="status" hidden></p>
+        </div>
       </section>
 
     </article>
@@ -122,6 +147,21 @@
         <button id="botao-confirmar" class="botao botao-primario" type="submit">ENTRAR</button>
       </div>
     </form>
+  </dialog>
+
+  <!-- Confirmação "Tem certeza?" (Sim / Não) para as exclusões do administrador -->
+  <dialog id="dialogo-confirmar" class="dialogo" aria-labelledby="confirmar-titulo" aria-describedby="confirmar-texto">
+    <div class="dialogo-conteudo">
+      <div class="dialogo-icone dialogo-icone-perigo" aria-hidden="true">
+        <svg viewBox="0 0 24 24"><path d="M12 3.8 2.9 19.6h18.2L12 3.8z"/><path d="M12 9.8v4.6"/><path d="M12 17.1v.1"/></svg>
+      </div>
+      <h2 id="confirmar-titulo">Tem certeza?</h2>
+      <p id="confirmar-texto" class="dialogo-texto"></p>
+      <div class="dialogo-acoes">
+        <button id="confirmar-nao" class="botao botao-secundario" type="button" autofocus>Não</button>
+        <button id="confirmar-sim" class="botao botao-perigo-cheio" type="button">Sim</button>
+      </div>
+    </div>
   </dialog>
 
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
